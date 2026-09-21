@@ -1,7 +1,7 @@
 # WWAN SMS Manager
 
 <p align="center">
-  <img src="assets/icon-512.png" alt="WWAN SMS Manager — icona app SMS modem 4G Windows" width="96" height="96" />
+  <img src="assets/icon-512.png" alt="WWAN SMS Manager — icona app SMS modem 4G Windows" width="180" />
 </p>
 
 <p align="center">
@@ -97,9 +97,13 @@ Multipart SMS are reassembled with correct PDU decoding.
 
 ### Download
 
+**Full package (recommended):**  
+**→ [`WwanSmsManager-1.0.0-win-portable.zip`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
+
+Or EXE only:  
 **→ [`WwanSmsManager.exe`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
 
-1. Download & run  
+1. Download, unzip (if ZIP) & run  
 2. Ensure Windows sees Cellular: `Settings → Network & Internet → Cellular`  
 3. Click **Aggiorna** (Refresh)  
 
