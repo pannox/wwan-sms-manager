@@ -54,9 +54,13 @@ Gestisce anche gli SMS lunghi spezzati in più parti.
 
 ### Download
 
-**→ [`WwanSmsManager.exe`](https://github.com/pannox/wwan-sms-manager/releases/latest)** (portable)
+**Pacchetto completo (consigliato):**  
+**→ [`WwanSmsManager-1.0.0-win-portable.zip`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
 
-1. Scarica e avvia  
+Oppure solo l’eseguibile:  
+**→ [`WwanSmsManager.exe`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
+
+1. Scarica, estrai (se ZIP) e avvia  
 2. Controlla che Windows veda il cellulare: `Impostazioni → Rete e Internet → Cellulare`  
 3. Premi **Aggiorna** nell’app  
 
