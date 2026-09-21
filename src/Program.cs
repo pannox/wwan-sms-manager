@@ -403,12 +403,13 @@ namespace SmsManagerApp
         static readonly Color Danger = Color.FromArgb(210, 78, 78);
         static readonly Color Border = Color.FromArgb(55, 66, 80);
 
-        const int DeleteTimeoutMs = 8000;
+        const int DeleteTimeoutMs = 5000;
         const int GeneralTimeoutMs = 45000;
+        const int RefreshAfterDeleteMs = 12000;
 
         public MainForm()
         {
-            Text = "SMS Manager — Mobile Broadband";
+            Text = "SMS Manager — Mobile Broadband  v1.0.1";
             Width = 1040;
             Height = 720;
             MinimumSize = new Size(900, 600);
@@ -962,16 +963,23 @@ namespace SmsManagerApp
                 MessageBoxButtons.YesNo, MessageBoxIcon.Question) != DialogResult.Yes) return;
 
             List<uint> ids = new List<uint>();
+            List<SmsItem> selected = new List<SmsItem>();
             foreach (ListViewItem row in list.SelectedItems)
             {
                 SmsItem it = row.Tag as SmsItem;
                 if (it == null) continue;
+                selected.Add(it);
                 foreach (uint id in it.PartIds)
                 {
                     if (!ids.Contains(id)) ids.Add(id);
                 }
             }
-            DeleteIdsAsync(ids, "Eliminazione...");
+            if (ids.Count == 0)
+            {
+                MessageBox.Show(this, "Nessun ID messaggio valido da eliminare.", "SMS Manager", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+                return;
+            }
+            DeleteIdsAsync(ids, selected, "Eliminazione...");
         }
 
         void DeleteAllAsync()
@@ -980,8 +988,8 @@ namespace SmsManagerApp
             if (MessageBox.Show(this, "Eliminare TUTTI gli SMS dalla memoria del modem?\nOperazione irreversibile.", "Svuota inbox",
                 MessageBoxButtons.YesNo, MessageBoxIcon.Warning) != DialogResult.Yes) return;
 
-            // Raccogli id dai messaggi già caricati; se lista vuota, rileggi raw dal modem
             List<uint> ids = new List<uint>();
+            List<SmsItem> all = new List<SmsItem>(items);
             foreach (SmsItem it in items)
             {
                 foreach (uint id in it.PartIds)
@@ -990,42 +998,73 @@ namespace SmsManagerApp
                 }
             }
 
+            // Se la lista UI è vuota ma il modem ha messaggi, li scopriamo nel worker
+            DeleteIdsAsync(ids, all, "Svuotamento inbox...", true);
+        }
+
+        /// <summary>
+        /// Elimina per ID con timeout duro, aggiornamento UI ottimistico e refresh non bloccante.
+        /// Evita il freeze tipico quando resta un solo SMS sul modem.
+        /// </summary>
+        void DeleteIdsAsync(List<uint> ids, List<SmsItem> removeFromUi, string status)
+        {
+            DeleteIdsAsync(ids, removeFromUi, status, false);
+        }
+
+        void DeleteIdsAsync(List<uint> ids, List<SmsItem> removeFromUi, string status, bool discoverIfEmpty)
+        {
             cancelWork = false;
-            SetBusy(true, "Preparazione svuotamento...");
-            ThreadPool.QueueUserWorkItem(delegate
+            SetBusy(true, status);
+
+            // UI ottimistica: togli subito i messaggi dalla lista (sblocca l'interfaccia)
+            if (removeFromUi != null && removeFromUi.Count > 0)
+            {
+                foreach (SmsItem it in removeFromUi)
+                    items.Remove(it);
+                RefreshListView();
+                txtFrom.Text = "";
+                txtDate.Text = "";
+                txtBody.Text = "";
+            }
+
+            // Worker STA: alcune stack WWAN si bloccano su MTA alla DeleteMessageAsync
+            Thread worker = new Thread(delegate()
             {
                 string err = null;
                 int ok = 0, fail = 0;
+                List<uint> toDelete = new List<uint>(ids);
                 try
                 {
-                    device = OpenDevice();
-                    if (ids.Count == 0)
+                    SmsDevice localDevice = OpenDevice();
+                    device = localDevice;
+
+                    if (discoverIfEmpty && toDelete.Count == 0)
                     {
-                        IReadOnlyList<ISmsMessage> msgs = AwaitProg(device.MessageStore.GetMessagesAsync(SmsMessageFilter.All), GeneralTimeoutMs);
+                        SetStatus("Lettura ID dal modem...");
+                        IReadOnlyList<ISmsMessage> msgs = AwaitProg(localDevice.MessageStore.GetMessagesAsync(SmsMessageFilter.All), RefreshAfterDeleteMs);
                         if (msgs != null)
                         {
                             foreach (ISmsMessage m in msgs)
                             {
-                                if (!ids.Contains(m.Id)) ids.Add(m.Id);
+                                if (!toDelete.Contains(m.Id)) toDelete.Add(m.Id);
                             }
                         }
                     }
 
-                    // NON usare DeleteMessagesAsync: su molti modem WWAN si blocca
-                    for (int i = 0; i < ids.Count; i++)
+                    for (int i = 0; i < toDelete.Count; i++)
                     {
                         if (cancelWork) break;
-                        uint id = ids[i];
-                        SetStatus("Eliminazione " + (i + 1) + "/" + ids.Count + " (id " + id + ")...");
+                        uint id = toDelete[i];
+                        SetStatus("Eliminazione " + (i + 1) + "/" + toDelete.Count + " (id " + id + ")...");
                         try
                         {
-                            AwaitAction(device.MessageStore.DeleteMessageAsync(id), DeleteTimeoutMs);
+                            // Timeout corto: se il modem non risponde (caso "ultimo SMS"), non restiamo bloccati
+                            AwaitAction(localDevice.MessageStore.DeleteMessageAsync(id), DeleteTimeoutMs);
                             ok++;
                         }
                         catch
                         {
                             fail++;
-                            // continua con i successivi
                         }
                     }
                 }
@@ -1034,57 +1073,118 @@ namespace SmsManagerApp
                     err = ex.Message;
                 }
 
-                BeginInvoke(new Action(delegate
-                {
-                    if (IsDisposed) return;
-                    SetBusy(false, err != null
-                        ? ("Errore: " + err)
-                        : ("Svuotamento: " + ok + " eliminati" + (fail > 0 ? (", " + fail + " non eliminabili") : "")));
-                    if (err != null)
-                        MessageBox.Show(this, err, "SMS Manager", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    else if (fail > 0)
-                        MessageBox.Show(this, "Eliminati " + ok + " messaggi.\n" + fail + " non eliminabili (timeout/modem).", "SMS Manager", MessageBoxButtons.OK, MessageBoxIcon.Warning);
-                    RefreshInboxAsync();
-                }));
-            });
-        }
-
-        void DeleteIdsAsync(List<uint> ids, string status)
-        {
-            cancelWork = false;
-            SetBusy(true, status);
-            ThreadPool.QueueUserWorkItem(delegate
-            {
-                string err = null;
-                int ok = 0, fail = 0;
                 try
                 {
-                    device = OpenDevice();
-                    for (int i = 0; i < ids.Count; i++)
+                    if (!IsDisposed && IsHandleCreated)
                     {
-                        if (cancelWork) break;
-                        SetStatus("Eliminazione " + (i + 1) + "/" + ids.Count + "...");
-                        try
+                        BeginInvoke(new Action(delegate
                         {
-                            AwaitAction(device.MessageStore.DeleteMessageAsync(ids[i]), DeleteTimeoutMs);
-                            ok++;
-                        }
-                        catch
-                        {
-                            fail++;
-                        }
+                            FinishDelete(err, ok, fail, toDelete.Count);
+                        }));
                     }
                 }
-                catch (Exception ex) { err = ex.Message; }
-
-                BeginInvoke(new Action(delegate
-                {
-                    if (IsDisposed) return;
-                    SetBusy(false, err != null ? "Errore eliminazione" : ("Eliminati " + ok + (fail > 0 ? (", falliti " + fail) : "")));
-                    if (err != null) MessageBox.Show(this, err, "SMS Manager", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    RefreshInboxAsync();
-                }));
+                catch { }
             });
+            worker.IsBackground = true;
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+        }
+
+        void FinishDelete(string err, int ok, int fail, int attempted)
+        {
+            if (IsDisposed) return;
+
+            // Sblocca SEMPRE l'UI prima di qualsiasi altra cosa
+            SetBusy(false, err != null
+                ? ("Errore: " + err)
+                : (ok > 0
+                    ? ("Eliminati " + ok + (fail > 0 ? (", timeout su " + fail) : ""))
+                    : (fail > 0 ? "Eliminazione non confermata dal modem (timeout)" : "Nessun messaggio eliminato")));
+
+            if (err != null)
+                MessageBox.Show(this, err, "SMS Manager", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            else if (ok == 0 && fail > 0)
+                MessageBox.Show(this,
+                    "Il modem non ha confermato l'eliminazione in tempo.\n" +
+                    "Se il messaggio è sparito dalla lista ma riappare dopo Aggiorna, riprova.",
+                    "SMS Manager", MessageBoxButtons.OK, MessageBoxIcon.Warning);
+
+            // Refresh non bloccante (timeout ridotto). Se fallisce, lasciamo la lista ottimistica.
+            SoftRefreshAfterDelete();
+        }
+
+        void SoftRefreshAfterDelete()
+        {
+            if (busy) return;
+            SetBusy(true, "Aggiornamento inbox...");
+            Thread worker = new Thread(delegate()
+            {
+                string err = null;
+                string phone = null;
+                int max = 0;
+                int rawCount = 0;
+                List<SmsItem> loaded = new List<SmsItem>();
+                try
+                {
+                    SmsDevice d = OpenDeviceWithTimeout(RefreshAfterDeleteMs);
+                    device = d;
+                    phone = d.AccountPhoneNumber;
+                    max = (int)d.MessageStore.MaxMessages;
+                    IReadOnlyList<ISmsMessage> msgs = AwaitProg(d.MessageStore.GetMessagesAsync(SmsMessageFilter.All), RefreshAfterDeleteMs);
+                    List<SmsItem> raw = new List<SmsItem>();
+                    if (msgs != null)
+                    {
+                        foreach (ISmsMessage m in msgs)
+                        {
+                            SmsItem it = ToItem(m);
+                            if (it != null) raw.Add(it);
+                        }
+                    }
+                    rawCount = raw.Count;
+                    loaded = ReassembleMultipart(raw);
+                    loaded.Sort(delegate(SmsItem a, SmsItem b) { return b.SortKey.CompareTo(a.SortKey); });
+                }
+                catch (Exception ex)
+                {
+                    err = ex.Message;
+                }
+
+                try
+                {
+                    if (!IsDisposed && IsHandleCreated)
+                    {
+                        BeginInvoke(new Action(delegate
+                        {
+                            if (IsDisposed) return;
+                            if (err == null)
+                            {
+                                items.Clear();
+                                items.AddRange(loaded);
+                                RefreshListView();
+                                lblPhone.Text = "SIM " + (string.IsNullOrEmpty(phone) ? "(sconosciuta)" : phone)
+                                    + "   ·   memoria modem " + rawCount + "/" + max;
+                                SetBusy(false, "Inbox aggiornata · " + items.Count + " messaggi");
+                            }
+                            else
+                            {
+                                // Non bloccare: tieni lo stato ottimistico già mostrato
+                                SetBusy(false, "Eliminazione inviata (refresh modem non riuscito: " + err + ")");
+                            }
+                        }));
+                    }
+                }
+                catch { }
+            });
+            worker.IsBackground = true;
+            worker.SetApartmentState(ApartmentState.STA);
+            worker.Start();
+        }
+
+        SmsDevice OpenDeviceWithTimeout(int timeoutMs)
+        {
+            SmsDevice d = AwaitOp(SmsDevice.GetDefaultAsync(), timeoutMs);
+            if (d == null) throw new Exception("Nessun modem Mobile Broadband / SMS trovato.");
+            return d;
         }
 
         void SendSmsAsync()
@@ -1441,24 +1541,29 @@ namespace SmsManagerApp
 
         static void AwaitAction(IAsyncAction op, int timeoutMs)
         {
-            using (ManualResetEvent evt = new ManualResetEvent(false))
+            // Non usare "using" sull'event: in caso di timeout il callback WinRT
+            // può arrivare dopo e non deve toccare un handle disposed (freeze/crash).
+            ManualResetEvent evt = new ManualResetEvent(false);
+            Exception err = null;
+            op.Completed = delegate(IAsyncAction info, AsyncStatus status)
             {
-                Exception err = null;
-                op.Completed = delegate(IAsyncAction info, AsyncStatus status)
+                try
                 {
-                    try
-                    {
-                        if (status != AsyncStatus.Completed)
-                            err = new Exception("AsyncStatus=" + status + " ErrorCode=" + info.ErrorCode);
-                        else
-                            info.GetResults();
-                    }
-                    catch (Exception ex) { err = ex; }
-                    evt.Set();
-                };
-                if (!evt.WaitOne(timeoutMs)) throw new TimeoutException("Timeout eliminazione/invio");
-                if (err != null) throw err;
+                    if (status != AsyncStatus.Completed)
+                        err = new Exception("AsyncStatus=" + status + " ErrorCode=" + info.ErrorCode);
+                    else
+                        info.GetResults();
+                }
+                catch (Exception ex) { err = ex; }
+                try { evt.Set(); } catch { }
+            };
+            if (!evt.WaitOne(timeoutMs))
+            {
+                // Lascia vivere evt fino al GC; non bloccare oltre il timeout
+                throw new TimeoutException("Timeout eliminazione/invio");
             }
+            try { evt.Close(); } catch { }
+            if (err != null) throw err;
         }
     }
 }

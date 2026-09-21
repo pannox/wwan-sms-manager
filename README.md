@@ -55,7 +55,7 @@ Gestisce anche gli SMS lunghi spezzati in più parti.
 ### Download
 
 **Pacchetto completo (consigliato):**  
-**→ [`WwanSmsManager-1.0.0-win-portable.zip`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
+**→ [`WwanSmsManager-1.0.1-win-portable.zip`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
 
 Oppure solo l’eseguibile:  
 **→ [`WwanSmsManager.exe`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
@@ -98,7 +98,7 @@ Multipart SMS are reassembled with correct PDU decoding.
 ### Download
 
 **Full package (recommended):**  
-**→ [`WwanSmsManager-1.0.0-win-portable.zip`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
+**→ [`WwanSmsManager-1.0.1-win-portable.zip`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
 
 Or EXE only:  
 **→ [`WwanSmsManager.exe`](https://github.com/pannox/wwan-sms-manager/releases/latest)**
