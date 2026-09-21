@@ -1,7 +1,7 @@
 # WWAN SMS Manager
 
 <p align="center">
-  <img src="assets/icon-512.png" alt="WWAN SMS Manager — icona app SMS modem 4G Windows" width="180" />
+  <img src="assets/icon-512.png" alt="WWAN SMS Manager — icona app SMS modem 4G Windows" width="96" height="96" />
 </p>
 
 <p align="center">
